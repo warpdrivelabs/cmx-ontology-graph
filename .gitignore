@@ -1,0 +1,4 @@
+node_modules/
+.tsc-tool
+*.log
+.DS_Store

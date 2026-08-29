@@ -1,0 +1,30 @@
+{
+  "name": "@cmx/ontology-graph",
+  "version": "1.0.0",
+  "private": true,
+  "description": "本体图（Object/Link ER 图）可视化编辑组件 — 独立 Web Component / TypeScript / 零框架 / 零运行时依赖。与 @cmx/decision-graph 平级，对标 @cmx/megasheet。",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && npm run bundle",
+    "bundle": "esbuild src/index.ts --bundle --format=esm --outfile=dist/cmx-ontology-graph.esm.js --platform=browser",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sync": "bash sync-component.sh"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.6"
+  }
+}
