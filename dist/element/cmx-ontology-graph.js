@@ -24,6 +24,7 @@ export class CmxOntologyGraph extends HTMLElement {
     selectedNodeId = null;
     selectedEdgeApiName = null;
     rubber = { from: null, to: null };
+    hotPort = null;
     interaction;
     _readonly = false;
     _bootstrapped = false;
@@ -35,6 +36,10 @@ export class CmxOntologyGraph extends HTMLElement {
             getSvg: () => this.root.querySelector('svg'),
             onNodeDrag: (id, x, y) => {
                 this.model.setLayoutHint(id, x, y);
+                // 移动节点 → 相连边锚点变化，清其手动布线（回退自动布线，锚点随节点）。
+                for (const e of this.model.edges)
+                    if (e.source === id || e.target === id)
+                        this.model.clearEdgeRoute(e.apiName);
                 this.paint();
             },
             onNodeDragEnd: (id) => {
@@ -43,10 +48,23 @@ export class CmxOntologyGraph extends HTMLElement {
             },
             onNodeSelect: (id) => this.selectNode(id),
             onRubber: (from, to) => {
+                if (!from)
+                    this.hotPort = null; // 松开/取消 → 清高亮
                 this.rubber = { from, to };
                 this.paint();
             },
+            onHotPort: (port) => {
+                this.hotPort = port; // 仅记录，paint 由 onRubber 触发（同一次移动）
+            },
             onConnect: (src, tgt) => this.requestConnect(src, tgt),
+            onSegmentDrag: (apiName, points) => {
+                this.model.setEdgeRoute(apiName, points);
+                this.paint();
+            },
+            onSegmentDragEnd: (apiName) => {
+                void apiName;
+                this.emit('spec-change', { spec: this.model.getDef() });
+            },
         });
     }
     connectedCallback() {
@@ -147,8 +165,8 @@ export class CmxOntologyGraph extends HTMLElement {
         this.render();
         this.emit('spec-change', { spec: this.model.getDef() });
     }
+    /** 重排：**不重置**已有位置，仅在现有各图元位置基础上重画（未定位的新节点走网格）。 */
     autoLayout() {
-        this.model.clearLayoutHints();
         this.render();
         this.emit('spec-change', { spec: this.model.getDef() });
     }
@@ -170,11 +188,16 @@ export class CmxOntologyGraph extends HTMLElement {
     currentLayout() {
         return computeLayout(this.model.getDef(), this.cfg(), this.model.layoutHints());
     }
-    /** 拉线落点 → 请求宿主补关系元数据（不直接建，交速建气泡）。 */
+    /** 拉线落点 → 请求宿主补关系元数据（不直接建，交速建气泡）。属性锚点带出源/靶属性。 */
     requestConnect(src, tgt) {
         this.rubber = { from: null, to: null };
         this.paint();
-        this.emit('link-add', { source: src, target: tgt });
+        const detail = { source: src.node, target: tgt.node };
+        if (src.prop)
+            detail.sourceProperty = src.prop;
+        if (tgt.prop)
+            detail.targetProperty = tgt.prop;
+        this.emit('link-add', detail);
     }
     emit(name, detail) {
         this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
@@ -185,6 +208,7 @@ export class CmxOntologyGraph extends HTMLElement {
             selectedEdgeApiName: this.selectedEdgeApiName,
             readonly: this._readonly,
             maxRows: this.cfg().maxRows,
+            hotPort: this.hotPort,
         };
     }
     render() {
@@ -192,7 +216,7 @@ export class CmxOntologyGraph extends HTMLElement {
         const svg = this.model.nodes.length
             ? renderSvg(this.model.getDef(), lay, this.cfg(), this.renderState())
             : '<div class="og-empty">空本体 · 双击画布或点「+ 对象类型」开始</div>';
-        this.root.innerHTML = `<style>${graphCss()}</style><div class="og-canvas" part="canvas">${svg}</div>`;
+        this.root.innerHTML = `<style>${graphCss()}</style><div class="og-canvas${this._readonly ? ' og-readonly' : ''}" part="canvas">${svg}</div>`;
         if (this._readonly)
             this.bindReadonlySelect();
         else
@@ -204,6 +228,7 @@ export class CmxOntologyGraph extends HTMLElement {
             this.render();
             return;
         }
+        canvas.classList.toggle('og-connecting', !!this.rubber.from);
         const lay = this.currentLayout();
         let svg = this.model.nodes.length
             ? renderSvg(this.model.getDef(), lay, this.cfg(), this.renderState())

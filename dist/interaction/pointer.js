@@ -8,6 +8,13 @@ export class InteractionController {
     cb;
     mode = 'idle';
     activeId = null;
+    activeProp = null;
+    activeSide = null;
+    connectStart = { x: 0, y: 0 };
+    segEdge = null;
+    segI = 0;
+    segOrient = '';
+    segRoute = [];
     startX = 0;
     startY = 0;
     grabDX = 0;
@@ -30,11 +37,47 @@ export class InteractionController {
     }
     onPointerDown(ev) {
         const target = ev.target;
+        // 边内部线段拖拽（两端非锚点）：优先于端口/节点。
+        const segEl = target.closest('[data-edge-seg]');
+        if (segEl) {
+            const grp = segEl.closest('[data-edge]');
+            const routeStr = grp ? grp.getAttribute('data-route') : null;
+            const route = routeStr
+                ? routeStr
+                    .trim()
+                    .split(/\s+/)
+                    .map((s) => {
+                    const c = s.split(',');
+                    return { x: Number(c[0] ?? 0), y: Number(c[1] ?? 0) };
+                })
+                : [];
+            if (route.length >= 4) {
+                this.mode = 'segdrag';
+                this.segEdge = segEl.getAttribute('data-edge-seg');
+                this.segI = parseInt(segEl.getAttribute('data-seg-i') || '0', 10);
+                this.segOrient = segEl.getAttribute('data-orient') || '';
+                this.segRoute = route;
+                this.moved = false;
+                const pt = this.toSvgPoint(ev.clientX, ev.clientY);
+                this.startX = pt.x;
+                this.startY = pt.y;
+                this.pointerId = ev.pointerId;
+                this.safeCapture(ev);
+                ev.preventDefault();
+                return;
+            }
+        }
         const portEl = target.closest('[data-port]');
         const nodeEl = target.closest('[data-node]');
         if (portEl) {
             this.mode = 'connect';
             this.activeId = portEl.getAttribute('data-port');
+            this.activeProp = portEl.getAttribute('data-prop');
+            this.activeSide = portEl.getAttribute('data-side');
+            this.connectStart = {
+                x: parseFloat(portEl.getAttribute('cx') || '0'),
+                y: parseFloat(portEl.getAttribute('cy') || '0'),
+            };
             this.pointerId = ev.pointerId;
             this.safeCapture(ev);
             ev.preventDefault();
@@ -80,9 +123,32 @@ export class InteractionController {
             this.cb.onNodeDrag(this.activeId, Math.max(0, pt.x - this.grabDX), Math.max(0, pt.y - this.grabDY));
         }
         else if (this.mode === 'connect' && this.activeId) {
-            const pos = this.cb.getLayout().pos[this.activeId];
-            const from = pos ? { x: pos.x + pos.w, y: pos.y + 23 } : null;
-            this.cb.onRubber(from, { x: pt.x, y: pt.y });
+            this.cb.onHotPort(this.hitPort(pt.x, pt.y, { node: this.activeId, prop: this.activeProp, side: this.activeSide }));
+            this.cb.onRubber(this.connectStart, { x: pt.x, y: pt.y });
+        }
+        else if (this.mode === 'segdrag' && this.segEdge) {
+            const dx = pt.x - this.startX;
+            const dy = pt.y - this.startY;
+            if (!this.moved && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD)
+                return;
+            this.moved = true;
+            const route = this.segRoute.map((p) => ({ x: p.x, y: p.y }));
+            const a = route[this.segI];
+            const b = route[this.segI + 1];
+            const oa = this.segRoute[this.segI];
+            const ob = this.segRoute[this.segI + 1];
+            if (a && b && oa && ob) {
+                // 水平段整体上下移（改 y）；垂直段整体左右移（改 x）。相邻垂直/水平段随之保持正交。
+                if (this.segOrient === 'H') {
+                    a.y = oa.y + dy;
+                    b.y = ob.y + dy;
+                }
+                else {
+                    a.x = oa.x + dx;
+                    b.x = ob.x + dx;
+                }
+            }
+            this.cb.onSegmentDrag(this.segEdge, route);
         }
     }
     onPointerUp(ev) {
@@ -98,22 +164,44 @@ export class InteractionController {
         }
         else if (this.mode === 'connect' && this.activeId) {
             const pt = this.toSvgPoint(ev.clientX, ev.clientY);
-            const tgt = this.hitNode(pt.x, pt.y);
             this.cb.onRubber(null, null);
-            // 允许自关联（拖回自身 = 层级关系，如组织树/BOM）；宿主速建气泡区分处理。
-            if (tgt)
-                this.cb.onConnect(this.activeId, tgt);
+            // 仅当松开在某个锚点上（阈值内）才建关系；否则取消、不弹气泡。允许自关联（拖回自身锚点）。
+            const tp = this.hitPort(pt.x, pt.y);
+            if (tp) {
+                const src = { node: this.activeId, prop: this.activeProp, side: this.activeSide };
+                this.cb.onConnect(src, tp);
+            }
+        }
+        else if (this.mode === 'segdrag' && this.segEdge) {
+            if (this.moved)
+                this.cb.onSegmentDragEnd(this.segEdge);
         }
         this.reset(ev);
     }
-    hitNode(x, y) {
-        const pos = this.cb.getLayout().pos;
-        for (const n of this.model.nodes) {
-            const p = pos[n.id];
-            if (p && x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h)
-                return n.id;
-        }
-        return null;
+    /** 吸附到最近的锚点（阈值内）；exclude 排除自身锚点（高亮时用）。返回 {node,prop,side} 或 null。 */
+    hitPort(x, y, exclude) {
+        const svg = this.cb.getSvg();
+        if (!svg)
+            return null;
+        let best = null;
+        let bestD = 26; // 吸附阈值（略大于半行高，便于对准属性行）
+        svg.querySelectorAll('[data-port]').forEach((el) => {
+            const cx = parseFloat(el.getAttribute('cx') || 'NaN');
+            const cy = parseFloat(el.getAttribute('cy') || 'NaN');
+            if (Number.isNaN(cx) || Number.isNaN(cy))
+                return;
+            const node = el.getAttribute('data-port') || '';
+            const prop = el.getAttribute('data-prop');
+            const side = el.getAttribute('data-side');
+            if (exclude && exclude.node === node && (exclude.prop || null) === (prop || null) && exclude.side === side)
+                return;
+            const d = Math.hypot(cx - x, cy - y);
+            if (d < bestD) {
+                bestD = d;
+                best = { node, prop, side };
+            }
+        });
+        return best;
     }
     onPointerCancel(ev) {
         this.cb.onRubber(null, null);
@@ -128,6 +216,9 @@ export class InteractionController {
         }
         this.mode = 'idle';
         this.activeId = null;
+        this.activeProp = null;
+        this.activeSide = null;
+        this.segEdge = null;
         this.moved = false;
         this.pointerId = -1;
     }

@@ -27,10 +27,49 @@ export class OntologyModel {
         return clone(this.def);
     }
     setDef(def) {
+        // 保留既有布局提示与手动布线（保存/刷新重建 spec 不带 _layout/_edgeRoutes 时不重置位置）。
+        const prevLayout = this.def && this.def._layout ? this.def._layout : undefined;
+        const prevRoutes = this.def && this.def._edgeRoutes ? this.def._edgeRoutes : undefined;
         this.def = clone(def);
         this.def.nodes = this.def.nodes || [];
         this.def.edges = this.def.edges || [];
+        if (!this.def._layout && prevLayout) {
+            const ids = new Set(this.def.nodes.map((n) => n.id));
+            const kept = {};
+            for (const k of Object.keys(prevLayout)) {
+                const v = prevLayout[k];
+                if (v && ids.has(k))
+                    kept[k] = v;
+            }
+            if (Object.keys(kept).length)
+                this.def._layout = kept;
+        }
+        if (!this.def._edgeRoutes && prevRoutes) {
+            const apis = new Set(this.def.edges.map((e) => e.apiName));
+            const kept = {};
+            for (const k of Object.keys(prevRoutes)) {
+                const v = prevRoutes[k];
+                if (v && apis.has(k))
+                    kept[k] = v;
+            }
+            if (Object.keys(kept).length)
+                this.def._edgeRoutes = kept;
+        }
         this.syncInterfaceLinks();
+    }
+    /** 设置某关系边的手动布线折点（含锚点）。 */
+    setEdgeRoute(apiName, points) {
+        this.def._edgeRoutes = this.def._edgeRoutes || {};
+        this.def._edgeRoutes[apiName] = points;
+    }
+    /** 取某关系边的手动布线折点；无则 undefined。 */
+    edgeRoute(apiName) {
+        return this.def._edgeRoutes ? this.def._edgeRoutes[apiName] : undefined;
+    }
+    /** 清除某关系边的手动布线（回退自动布线）。 */
+    clearEdgeRoute(apiName) {
+        if (this.def._edgeRoutes)
+            delete this.def._edgeRoutes[apiName];
     }
     get nodes() {
         return this.def.nodes;

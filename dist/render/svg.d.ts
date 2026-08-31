@@ -16,6 +16,12 @@ export interface RenderState {
     selectedEdgeApiName: string | null;
     readonly: boolean;
     maxRows: number;
+    /** 连线拖拽中，光标下高亮的锚点（状态驱动，随每次重绘生效）。 */
+    hotPort: {
+        node: string;
+        prop: string | null;
+        side: string | null;
+    } | null;
 }
 export declare function renderSvg(def: OntologyGraphDef, lay: LayoutResult, cfg: LayoutConfig, st: RenderState): string;
 /** 组件样式（走 --og-* 令牌，宿主锚 --sap*；裸色兜底）。 */

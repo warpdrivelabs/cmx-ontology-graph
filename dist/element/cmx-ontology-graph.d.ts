@@ -20,6 +20,7 @@ export declare class CmxOntologyGraph extends HTMLElement {
     private selectedNodeId;
     private selectedEdgeApiName;
     private rubber;
+    private hotPort;
     private interaction;
     private _readonly;
     private _bootstrapped;
@@ -37,13 +38,14 @@ export declare class CmxOntologyGraph extends HTMLElement {
     addLink(apiName: string, src: string, tgt: string, card: Cardinality, roleA?: string, roleB?: string): string | null;
     delNode(id: string): void;
     delLink(apiName: string): void;
+    /** 重排：**不重置**已有位置，仅在现有各图元位置基础上重画（未定位的新节点走网格）。 */
     autoLayout(): void;
     selectNode(id: string): void;
     /** 供宿主编辑节点后回写模型并重画。 */
     refresh(): void;
     private cfg;
     private currentLayout;
-    /** 拉线落点 → 请求宿主补关系元数据（不直接建，交速建气泡）。 */
+    /** 拉线落点 → 请求宿主补关系元数据（不直接建，交速建气泡）。属性锚点带出源/靶属性。 */
     private requestConnect;
     private emit;
     private renderState;

@@ -32,10 +32,43 @@ var OntologyModel = class _OntologyModel {
     return clone(this.def);
   }
   setDef(def) {
+    const prevLayout = this.def && this.def._layout ? this.def._layout : void 0;
+    const prevRoutes = this.def && this.def._edgeRoutes ? this.def._edgeRoutes : void 0;
     this.def = clone(def);
     this.def.nodes = this.def.nodes || [];
     this.def.edges = this.def.edges || [];
+    if (!this.def._layout && prevLayout) {
+      const ids = new Set(this.def.nodes.map((n) => n.id));
+      const kept = {};
+      for (const k of Object.keys(prevLayout)) {
+        const v = prevLayout[k];
+        if (v && ids.has(k)) kept[k] = v;
+      }
+      if (Object.keys(kept).length) this.def._layout = kept;
+    }
+    if (!this.def._edgeRoutes && prevRoutes) {
+      const apis = new Set(this.def.edges.map((e) => e.apiName));
+      const kept = {};
+      for (const k of Object.keys(prevRoutes)) {
+        const v = prevRoutes[k];
+        if (v && apis.has(k)) kept[k] = v;
+      }
+      if (Object.keys(kept).length) this.def._edgeRoutes = kept;
+    }
     this.syncInterfaceLinks();
+  }
+  /** 设置某关系边的手动布线折点（含锚点）。 */
+  setEdgeRoute(apiName, points) {
+    this.def._edgeRoutes = this.def._edgeRoutes || {};
+    this.def._edgeRoutes[apiName] = points;
+  }
+  /** 取某关系边的手动布线折点；无则 undefined。 */
+  edgeRoute(apiName) {
+    return this.def._edgeRoutes ? this.def._edgeRoutes[apiName] : void 0;
+  }
+  /** 清除某关系边的手动布线（回退自动布线）。 */
+  clearEdgeRoute(apiName) {
+    if (this.def._edgeRoutes) delete this.def._edgeRoutes[apiName];
   }
   get nodes() {
     return this.def.nodes;
@@ -175,7 +208,7 @@ var DEFAULT_LAYOUT = {
   headH: 46,
   rowH: 22,
   maxRows: 6,
-  pad: 40
+  pad: 0
 };
 var PREVIEW_LAYOUT = {
   colGap: 260,
@@ -215,7 +248,231 @@ function layout(def, cfg, hints) {
   return { pos, width: maxX + cfg.pad, height: maxY + cfg.pad };
 }
 
+// src/layout/route.ts
+var MARGIN = 14;
+var STUB = 18;
+var TURN = 14;
+var r0 = (v) => Math.round(v);
+function center(r) {
+  return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+}
+function inflate(r, m) {
+  return { x: r.x - m, y: r.y - m, w: r.w + 2 * m, h: r.h + 2 * m };
+}
+function chooseSides(a, b) {
+  const ca = center(a);
+  const cb = center(b);
+  const dx = cb.x - ca.x;
+  const dy = cb.y - ca.y;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? { sa: "R", sb: "L" } : { sa: "L", sb: "R" };
+  return dy >= 0 ? { sa: "B", sb: "T" } : { sa: "T", sb: "B" };
+}
+function anchorPt(r, s) {
+  if (s === "R") return { x: r0(r.x + r.w), y: r0(r.y + r.h / 2) };
+  if (s === "L") return { x: r0(r.x), y: r0(r.y + r.h / 2) };
+  if (s === "T") return { x: r0(r.x + r.w / 2), y: r0(r.y) };
+  return { x: r0(r.x + r.w / 2), y: r0(r.y + r.h) };
+}
+function stubOf(p, s) {
+  if (s === "R") return { x: p.x + STUB, y: p.y };
+  if (s === "L") return { x: p.x - STUB, y: p.y };
+  if (s === "T") return { x: p.x, y: p.y - STUB };
+  return { x: p.x, y: p.y + STUB };
+}
+function segHits(p, q, r) {
+  const x0 = Math.min(p.x, q.x);
+  const x1 = Math.max(p.x, q.x);
+  const y0 = Math.min(p.y, q.y);
+  const y1 = Math.max(p.y, q.y);
+  return x0 < r.x + r.w && x1 > r.x && y0 < r.y + r.h && y1 > r.y;
+}
+function blocked(p, q, obst) {
+  for (const r of obst) if (segHits(p, q, r)) return true;
+  return false;
+}
+function ptInside(p, obst) {
+  for (const r of obst) if (p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h) return true;
+  return false;
+}
+function uniqSorted(a) {
+  return [...new Set(a.map(r0))].sort((m, n) => m - n);
+}
+function astar(start, goal, xs, ys, obst) {
+  const ixOf = /* @__PURE__ */ new Map();
+  xs.forEach((v, i) => ixOf.set(v, i));
+  const iyOf = /* @__PURE__ */ new Map();
+  ys.forEach((v, i) => iyOf.set(v, i));
+  if (!ixOf.has(start.x) || !iyOf.has(start.y) || !ixOf.has(goal.x) || !iyOf.has(goal.y)) return null;
+  const K = (x, y) => x + ":" + y;
+  const hEst = (x, y) => Math.abs(x - goal.x) + Math.abs(y - goal.y);
+  const open = /* @__PURE__ */ new Map();
+  const all = /* @__PURE__ */ new Map();
+  const closed = /* @__PURE__ */ new Set();
+  const sKey = K(start.x, start.y);
+  const gKey = K(goal.x, goal.y);
+  open.set(sKey, { x: start.x, y: start.y, g: 0, f: hEst(start.x, start.y), dir: "", prev: null });
+  all.set(sKey, open.get(sKey));
+  let guard = 0;
+  while (open.size > 0 && guard++ < 4e4) {
+    let curKey = null;
+    let cur = null;
+    for (const [k, n] of open) if (cur === null || n.f < cur.f) {
+      cur = n;
+      curKey = k;
+    }
+    if (curKey === null || cur === null) break;
+    open.delete(curKey);
+    closed.add(curKey);
+    if (curKey === gKey) {
+      const pts = [];
+      let node = cur;
+      while (node) {
+        pts.push({ x: node.x, y: node.y });
+        node = node.prev ? all.get(node.prev) ?? null : null;
+      }
+      pts.reverse();
+      return pts.slice(1, -1);
+    }
+    const ix = ixOf.get(cur.x);
+    const iy = iyOf.get(cur.y);
+    if (ix === void 0 || iy === void 0) continue;
+    const cand = [];
+    const xr = xs[ix + 1];
+    if (xr !== void 0) cand.push({ x: xr, y: cur.y, d: "H" });
+    const xl = xs[ix - 1];
+    if (xl !== void 0) cand.push({ x: xl, y: cur.y, d: "H" });
+    const yd = ys[iy + 1];
+    if (yd !== void 0) cand.push({ x: cur.x, y: yd, d: "V" });
+    const yu = ys[iy - 1];
+    if (yu !== void 0) cand.push({ x: cur.x, y: yu, d: "V" });
+    for (const nb of cand) {
+      const nKey = K(nb.x, nb.y);
+      if (closed.has(nKey)) continue;
+      if (blocked({ x: cur.x, y: cur.y }, { x: nb.x, y: nb.y }, obst)) continue;
+      const step = Math.abs(nb.x - cur.x) + Math.abs(nb.y - cur.y);
+      const turn = cur.dir !== "" && cur.dir !== nb.d ? TURN : 0;
+      const ng = cur.g + step + turn;
+      const prevN = all.get(nKey);
+      if (prevN === void 0 || ng < prevN.g) {
+        const nn = { x: nb.x, y: nb.y, g: ng, f: ng + hEst(nb.x, nb.y), dir: nb.d, prev: curKey };
+        open.set(nKey, nn);
+        all.set(nKey, nn);
+      }
+    }
+  }
+  return null;
+}
+function fallback(pa, sPt, gPt, pb) {
+  if (Math.abs(gPt.x - sPt.x) >= Math.abs(gPt.y - sPt.y)) {
+    const mx = r0((sPt.x + gPt.x) / 2);
+    return [pa, sPt, { x: mx, y: sPt.y }, { x: mx, y: gPt.y }, gPt, pb];
+  }
+  const my = r0((sPt.y + gPt.y) / 2);
+  return [pa, sPt, { x: sPt.x, y: my }, { x: gPt.x, y: my }, gPt, pb];
+}
+function selfLoop(r) {
+  const ext = 30;
+  const rx = r.x + r.w;
+  const cy = r0(r.y + r.h / 2);
+  const cx = r0(r.x + r.w / 2);
+  return [
+    { x: r0(rx), y: cy },
+    { x: r0(rx + ext), y: cy },
+    { x: r0(rx + ext), y: r0(r.y - ext) },
+    { x: cx, y: r0(r.y - ext) },
+    { x: cx, y: r0(r.y) }
+  ];
+}
+function simplify(pts) {
+  const out = [];
+  for (const p of pts) {
+    const b = out[out.length - 1];
+    if (b && b.x === p.x && b.y === p.y) continue;
+    const a = out[out.length - 2];
+    if (a && b && (a.x === b.x && b.x === p.x || a.y === b.y && b.y === p.y)) {
+      out[out.length - 1] = p;
+      continue;
+    }
+    out.push(p);
+  }
+  return out;
+}
+function routeAnchored(pa, sa, pb, sb, endA, endB, others) {
+  const sPt = stubOf(pa, sa);
+  const gPt = stubOf(pb, sb);
+  const inflated = others.map((r) => inflate(r, MARGIN));
+  const obst = [...inflated, endA, endB];
+  const xs = uniqSorted([sPt.x, gPt.x, r0((sPt.x + gPt.x) / 2), ...inflated.flatMap((r) => [r.x, r.x + r.w])]);
+  const ys = uniqSorted([sPt.y, gPt.y, r0((sPt.y + gPt.y) / 2), ...inflated.flatMap((r) => [r.y, r.y + r.h])]);
+  let mids = null;
+  if (!ptInside(sPt, obst) && !ptInside(gPt, obst)) mids = astar(sPt, gPt, xs, ys, obst);
+  const raw = mids ? [pa, sPt, ...mids, gPt, pb] : fallback(pa, sPt, gPt, pb);
+  return simplify(raw);
+}
+function routeEdge(a, b, others) {
+  if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && a.w === b.w && a.h === b.h) return selfLoop(a);
+  const { sa, sb } = chooseSides(a, b);
+  return routeAnchored(anchorPt(a, sa), sa, anchorPt(b, sb), sb, a, b, others);
+}
+function toPath(pts, radius = 7) {
+  if (pts.length < 2) return "";
+  const p0 = pts[0];
+  if (pts.length === 2) {
+    const p1 = pts[1];
+    return `M${p0.x},${p0.y} L${p1.x},${p1.y}`;
+  }
+  let d = `M${p0.x},${p0.y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const c = pts[i + 1];
+    const r = Math.min(radius, dist(a, b) / 2, dist(b, c) / 2);
+    const t1 = towards(b, a, r);
+    const t2 = towards(b, c, r);
+    d += ` L${round1(t1.x)},${round1(t1.y)} Q${b.x},${b.y} ${round1(t2.x)},${round1(t2.y)}`;
+  }
+  const last = pts[pts.length - 1];
+  d += ` L${last.x},${last.y}`;
+  return d;
+}
+function polyMidpoint(pts) {
+  if (pts.length === 0) return { x: 0, y: 0 };
+  if (pts.length === 1) return pts[0];
+  const seg = [];
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const d = dist(pts[i - 1], pts[i]);
+    seg.push(d);
+    total += d;
+  }
+  let acc = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const d = seg[i - 1] ?? 0;
+    if (acc + d >= total / 2) {
+      const t = d ? (total / 2 - acc) / d : 0;
+      const a = pts[i - 1];
+      const b = pts[i];
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    }
+    acc += d;
+  }
+  return pts[Math.floor(pts.length / 2)];
+}
+function dist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+function towards(from, to, d) {
+  const len = dist(from, to) || 1;
+  return { x: from.x + (to.x - from.x) * d / len, y: from.y + (to.y - from.y) * d / len };
+}
+function round1(v) {
+  return Math.round(v * 10) / 10;
+}
+
 // src/render/svg.ts
+function portHot(hot, node, prop, side) {
+  return !!hot && hot.node === node && (hot.prop || null) === (prop || null) && hot.side === side;
+}
 function esc(s) {
   return String(s == null ? "" : s).replace(
     /[&<>"]/g,
@@ -230,7 +487,7 @@ function propGlyph(p) {
 function statusClass(n) {
   return `og-st-${n.status || "experimental"}`;
 }
-function objectCard(n, r, cfg, sel) {
+function objectCard(n, r, cfg, sel, hot) {
   const color = n.color || "var(--og-node-bar)";
   const props = n.properties || [];
   const shown = props.slice(0, cfg.maxRows);
@@ -244,68 +501,139 @@ function objectCard(n, r, cfg, sel) {
     return `<text class="og-prow" x="${r.x + 14}" y="${y}"><tspan class="og-pg">${glyph}</tspan> ${esc(p.apiName)}${flags} ${ty}${sem}</text>`;
   }).join("");
   const more = extra > 0 ? `<text class="og-more" x="${r.x + 14}" y="${r.y + r.h - 8}">+${extra} more</text>` : "";
-  const port = `<circle class="og-port" data-port="${esc(n.id)}" cx="${r.x + r.w}" cy="${r.y + cfg.headH / 2}" r="5"/>`;
+  const pid = esc(n.id);
+  const ports = shown.map((p, i) => {
+    const cy = r.y + cfg.headH + i * cfg.rowH + cfg.rowH / 2;
+    const pa = esc(p.apiName);
+    const hl = (side) => portHot(hot, n.id, p.apiName, side) ? " hot" : "";
+    return `<circle class="og-port${hl("L")}" data-port="${pid}" data-prop="${pa}" data-side="L" cx="${r.x}" cy="${cy}" r="4.5"/><circle class="og-port${hl("R")}" data-port="${pid}" data-prop="${pa}" data-side="R" cx="${r.x + r.w}" cy="${cy}" r="4.5"/>`;
+  }).join("");
+  const clipId = `og-clip-${n.id.replace(/[^\w-]/g, "_")}`;
   return `<g class="og-node og-object ${statusClass(n)} ${sel ? "sel" : ""}" data-node="${esc(n.id)}">
+    <clipPath id="${clipId}"><rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10"/></clipPath>
     <rect class="og-card" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10"/>
-    <rect class="og-bar" x="${r.x}" y="${r.y}" width="${r.w}" height="6" rx="3" fill="${esc(color)}"/>
+    <rect class="og-bar" x="${r.x}" y="${r.y}" width="${r.w}" height="6" fill="${esc(color)}" clip-path="url(#${clipId})"/>
     <text class="og-title" x="${r.x + 14}" y="${r.y + 26}">${esc(n.displayName || n.id)}</text>
     <text class="og-api" x="${r.x + 14}" y="${r.y + 40}">${esc(n.id)}</text>
     <line class="og-hr" x1="${r.x}" y1="${r.y + cfg.headH}" x2="${r.x + r.w}" y2="${r.y + cfg.headH}"/>
-    ${rows}${more}${port}
+    ${rows}${more}${ports}
   </g>`;
 }
-function interfaceCard(n, r, sel) {
+function interfaceCard(n, r, sel, hot) {
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  const nid = esc(n.id);
+  const hl = (side) => portHot(hot, n.id, null, side) ? " hot" : "";
+  const ports = `<circle class="og-port${hl("T")}" data-port="${nid}" data-side="T" cx="${cx}" cy="${r.y}" r="4.5"/><circle class="og-port${hl("B")}" data-port="${nid}" data-side="B" cx="${cx}" cy="${r.y + r.h}" r="4.5"/><circle class="og-port${hl("L")}" data-port="${nid}" data-side="L" cx="${r.x}" cy="${cy}" r="4.5"/><circle class="og-port${hl("R")}" data-port="${nid}" data-side="R" cx="${r.x + r.w}" cy="${cy}" r="4.5"/>`;
   return `<g class="og-node og-interface ${sel ? "sel" : ""}" data-node="${esc(n.id)}">
     <rect class="og-ifcard" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${r.h / 2}"/>
     <text class="og-iftag" x="${r.x + 14}" y="${r.y + 18}">\xABinterface\xBB</text>
     <text class="og-title" x="${r.x + 14}" y="${r.y + 36}">${esc(n.displayName || n.id)}</text>
+    ${ports}
   </g>`;
 }
-function edgePath(e, from, to, idx, sel) {
-  const x1 = from.x + from.w;
-  const y1 = from.y + 23;
-  const x2 = to.x;
-  const y2 = to.y + 23;
-  const midX = (x1 + x2) / 2;
-  const d = `M${x1},${y1} C${midX},${y1} ${midX},${y2} ${x2},${y2}`;
-  if (e.isInterfaceLink) {
-    return `<path class="og-edge og-iflink" d="${d}"/>`;
+function primaryKeyProp(n) {
+  const p = n && n.properties ? n.properties.find((x) => x.isPrimaryKey) : void 0;
+  return p ? p.apiName : null;
+}
+function normName(s) {
+  return (s || "").toLowerCase().replace(/[\s_\-./:\\|()\[\]{}·（）【】]+/g, "");
+}
+function fkProp(src, e, tgt) {
+  if (!src || !src.properties) return null;
+  const targets = [tgt ? tgt.displayName : void 0, tgt ? tgt.id : void 0, e.roleA, e.displayName].map(normName).filter((s) => s.length >= 2);
+  if (targets.length === 0) return null;
+  const pk = primaryKeyProp(src);
+  let best = null;
+  for (const p of src.properties) {
+    if (p.apiName === pk) continue;
+    const c = normName(p.apiName);
+    if (c.length < 2) continue;
+    for (const t of targets) {
+      if (c === t || c.includes(t) || t.includes(c)) {
+        const score = Math.min(c.length, t.length);
+        if (best === null || score > best.score) best = { name: p.apiName, score };
+      }
+    }
   }
+  return best ? best.name : null;
+}
+function propAnchor(rect, node, cfg, propApi, side) {
+  if (!propApi || !node || !node.properties) return null;
+  const idx = node.properties.slice(0, cfg.maxRows).findIndex((p) => p.apiName === propApi);
+  if (idx < 0) return null;
+  const y = Math.round(rect.y + cfg.headH + idx * cfg.rowH + cfg.rowH / 2);
+  const x = side === "R" ? Math.round(rect.x + rect.w) : Math.round(rect.x);
+  return { x, y };
+}
+function sideMid(rect, side) {
+  return { x: side === "R" ? Math.round(rect.x + rect.w) : Math.round(rect.x), y: Math.round(rect.y + rect.h / 2) };
+}
+function horizSide(self, other) {
+  return other.x + other.w / 2 >= self.x + self.w / 2 ? "R" : "L";
+}
+function nearPt(a, b) {
+  return Math.abs(a.x - b.x) <= 1.5 && Math.abs(a.y - b.y) <= 1.5;
+}
+function segLines(pts, apiName) {
+  let out = "";
+  for (let i = 1; i <= pts.length - 3; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const orient = a.y === b.y ? "H" : a.x === b.x ? "V" : "";
+    if (!orient) continue;
+    out += `<line class="og-seg og-seg-${orient}" data-edge-seg="${esc(apiName)}" data-seg-i="${i}" data-orient="${orient}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/>`;
+  }
+  return out;
+}
+function edgePath(e, from, to, srcNode, tgtNode, cfg, others, manualRoute, sel) {
+  if (e.isInterfaceLink) {
+    const d2 = toPath(routeEdge(from, to, others));
+    return `<path class="og-edge og-iflink" d="${d2}"/>`;
+  }
+  const sSide = horizSide(from, to);
+  const tSide = horizSide(to, from);
+  const srcProp = e.sourceProperty ?? fkProp(srcNode, e, tgtNode) ?? primaryKeyProp(srcNode);
+  const tgtProp = e.targetProperty ?? primaryKeyProp(tgtNode);
+  const pa = propAnchor(from, srcNode, cfg, srcProp, sSide) ?? sideMid(from, sSide);
+  const pb = propAnchor(to, tgtNode, cfg, tgtProp, tSide) ?? sideMid(to, tSide);
+  const useManual = !!manualRoute && manualRoute.length >= 2 && nearPt(manualRoute[0], pa) && nearPt(manualRoute[manualRoute.length - 1], pb);
+  const pts = useManual ? manualRoute : routeAnchored(pa, sSide, pb, tSide, from, to, others);
+  const d = toPath(pts);
   const cls = `og-edge og-link${sel ? " sel" : ""}`;
-  const marker = e.cardinality === "manyToMany" ? "url(#og-many)" : e.cardinality === "oneToOne" ? "url(#og-one)" : "url(#og-many)";
   const label = e.displayName || e.apiName;
   const role = e.roleA ? ` \xB7 ${esc(e.roleA)}` : "";
-  const lx = midX;
-  const ly = (y1 + y2) / 2 - 6;
-  return `<g data-edge="${esc(e.apiName)}">
+  const mid = polyMidpoint(pts);
+  const route = pts.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`).join(" ");
+  return `<g data-edge="${esc(e.apiName)}" data-route="${route}">
     <path class="${cls} og-hit" d="${d}"/>
-    <path class="${cls}" d="${d}" marker-end="${marker}"/>
-    <text class="og-elabel" x="${lx}" y="${ly}" text-anchor="middle">${esc(label)}${role}</text>
+    <path class="${cls}" d="${d}" marker-end="url(#og-arrow)"/>
+    ${segLines(pts, e.apiName)}
+    <text class="og-elabel" x="${Math.round(mid.x)}" y="${Math.round(mid.y) - 6}" text-anchor="middle">${esc(label)}${role}</text>
   </g>`;
 }
 function renderSvg(def, lay, cfg, st) {
   const nodeById = new Map(def.nodes.map((n) => [n.id, n]));
-  const edges = (def.edges || []).map((e, i) => {
+  const edges = (def.edges || []).map((e) => {
     const from = lay.pos[e.source];
     const to = lay.pos[e.target];
     if (!from || !to) return "";
-    return edgePath(e, from, to, i, st.selectedEdgeApiName === e.apiName);
+    const others = def.nodes.filter((n) => n.id !== e.source && n.id !== e.target).map((n) => lay.pos[n.id]).filter((r) => !!r);
+    const manualRoute = def._edgeRoutes ? def._edgeRoutes[e.apiName] : void 0;
+    return edgePath(e, from, to, nodeById.get(e.source), nodeById.get(e.target), cfg, others, manualRoute, st.selectedEdgeApiName === e.apiName);
   }).join("");
   const nodes = def.nodes.map((n) => {
     const r = lay.pos[n.id];
     if (!r) return "";
     const sel = st.selectedNodeId === n.id;
-    return n.kind === "interface" ? interfaceCard(n, r, sel) : objectCard(n, r, cfg, sel);
+    return n.kind === "interface" ? interfaceCard(n, r, sel, st.hotPort) : objectCard(n, r, cfg, sel, st.hotPort);
   }).join("");
   const w = Math.max(lay.width, 400);
   const h = Math.max(lay.height, 300);
   return `<svg class="og-svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
     <defs>
-      <marker id="og-many" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto">
-        <path d="M1,1 L11,6 L1,11" fill="none" class="og-mk"/>
-      </marker>
-      <marker id="og-one" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto">
-        <path d="M6,1 L6,11 M8,6 L11,6" fill="none" class="og-mk"/>
+      <marker id="og-arrow" viewBox="0 0 12 12" refX="10.5" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
+        <path d="M2,2.2 L10.5,6 L2,9.8 L4.8,6 Z" class="og-mk"/>
       </marker>
     </defs>
     <g class="og-edges">${edges}</g>
@@ -314,9 +642,9 @@ function renderSvg(def, lay, cfg, st) {
 }
 function graphCss() {
   return `
-  :host{display:block}
+  :host{display:block;width:100%;height:100%}
   .og-canvas{position:relative;width:100%;height:100%;overflow:auto;background:var(--og-bg,#0b1020)}
-  .og-svg{display:block;min-width:100%}
+  .og-svg{display:block}
   .og-empty{padding:40px;text-align:center;color:var(--og-muted,#94a3b8);font-size:13px}
   /* \u5361\u7247 */
   .og-card{fill:var(--og-node,#121a2e);stroke:var(--og-border,#243049);stroke-width:1.2}
@@ -334,8 +662,10 @@ function graphCss() {
   .og-req{fill:var(--og-err,#ef4444);font-weight:700}
   .og-idx{fill:var(--og-warn,#f59e0b)}
   .og-more{fill:var(--og-muted,#64748b);font-size:10.5px;font-style:italic}
-  .og-port{fill:var(--og-accent,#22d3ee);stroke:var(--og-node,#121a2e);stroke-width:1.5;cursor:crosshair;opacity:.55}
-  .og-port:hover{opacity:1;r:6}
+  .og-port{fill:var(--og-accent,#22d3ee);stroke:var(--og-node,#121a2e);stroke-width:1.5;cursor:crosshair;opacity:.6;transition:opacity .12s ease, r .12s ease}
+  .og-port:hover{opacity:1;r:6.5}
+  .og-port.hot{opacity:1;r:8;fill:var(--og-ok,#22c55e);stroke:var(--og-node,#121a2e);stroke-width:2;filter:drop-shadow(0 0 4px var(--og-ok,#22c55e))}
+  .og-canvas.og-readonly .og-port{display:none}
   /* \u63A5\u53E3 */
   .og-ifcard{fill:var(--og-iface,#1e1b3a);stroke:var(--og-accent2,#8b5cf6);stroke-dasharray:4 3;stroke-width:1.2}
   .og-iftag{fill:var(--og-accent2,#a78bfa);font-size:10px;font-style:italic}
@@ -344,8 +674,12 @@ function graphCss() {
   .og-link{stroke:var(--og-edge,#64748b);stroke-width:1.6}
   .og-link.sel{stroke:var(--og-accent,#22d3ee);stroke-width:2.4}
   .og-hit{stroke:transparent;stroke-width:12;cursor:pointer}
+  .og-seg{stroke:transparent;stroke-width:12;fill:none}
+  .og-seg-H{cursor:ns-resize}
+  .og-seg-V{cursor:ew-resize}
+  .og-seg-H:hover,.og-seg-V:hover{stroke:var(--og-accent,#22d3ee);opacity:.35}
   .og-iflink{stroke:var(--og-accent2,#8b5cf6);stroke-width:1.3;stroke-dasharray:4 3;opacity:.7}
-  .og-mk{stroke:var(--og-edge,#64748b);stroke-width:1.4}
+  .og-mk{fill:var(--og-edge,#64748b);stroke:none}
   .og-elabel{fill:var(--og-muted,#94a3b8);font-size:10.5px}
   .og-rubber{stroke:var(--og-accent,#22d3ee);stroke-width:1.8;stroke-dasharray:5 4;fill:none}
   `;
@@ -358,6 +692,13 @@ var InteractionController = class {
   cb;
   mode = "idle";
   activeId = null;
+  activeProp = null;
+  activeSide = null;
+  connectStart = { x: 0, y: 0 };
+  segEdge = null;
+  segI = 0;
+  segOrient = "";
+  segRoute = [];
   startX = 0;
   startY = 0;
   grabDX = 0;
@@ -379,11 +720,41 @@ var InteractionController = class {
   }
   onPointerDown(ev) {
     const target = ev.target;
+    const segEl = target.closest("[data-edge-seg]");
+    if (segEl) {
+      const grp = segEl.closest("[data-edge]");
+      const routeStr = grp ? grp.getAttribute("data-route") : null;
+      const route = routeStr ? routeStr.trim().split(/\s+/).map((s) => {
+        const c = s.split(",");
+        return { x: Number(c[0] ?? 0), y: Number(c[1] ?? 0) };
+      }) : [];
+      if (route.length >= 4) {
+        this.mode = "segdrag";
+        this.segEdge = segEl.getAttribute("data-edge-seg");
+        this.segI = parseInt(segEl.getAttribute("data-seg-i") || "0", 10);
+        this.segOrient = segEl.getAttribute("data-orient") || "";
+        this.segRoute = route;
+        this.moved = false;
+        const pt = this.toSvgPoint(ev.clientX, ev.clientY);
+        this.startX = pt.x;
+        this.startY = pt.y;
+        this.pointerId = ev.pointerId;
+        this.safeCapture(ev);
+        ev.preventDefault();
+        return;
+      }
+    }
     const portEl = target.closest("[data-port]");
     const nodeEl = target.closest("[data-node]");
     if (portEl) {
       this.mode = "connect";
       this.activeId = portEl.getAttribute("data-port");
+      this.activeProp = portEl.getAttribute("data-prop");
+      this.activeSide = portEl.getAttribute("data-side");
+      this.connectStart = {
+        x: parseFloat(portEl.getAttribute("cx") || "0"),
+        y: parseFloat(portEl.getAttribute("cy") || "0")
+      };
       this.pointerId = ev.pointerId;
       this.safeCapture(ev);
       ev.preventDefault();
@@ -423,9 +794,28 @@ var InteractionController = class {
       this.moved = true;
       this.cb.onNodeDrag(this.activeId, Math.max(0, pt.x - this.grabDX), Math.max(0, pt.y - this.grabDY));
     } else if (this.mode === "connect" && this.activeId) {
-      const pos = this.cb.getLayout().pos[this.activeId];
-      const from = pos ? { x: pos.x + pos.w, y: pos.y + 23 } : null;
-      this.cb.onRubber(from, { x: pt.x, y: pt.y });
+      this.cb.onHotPort(this.hitPort(pt.x, pt.y, { node: this.activeId, prop: this.activeProp, side: this.activeSide }));
+      this.cb.onRubber(this.connectStart, { x: pt.x, y: pt.y });
+    } else if (this.mode === "segdrag" && this.segEdge) {
+      const dx = pt.x - this.startX;
+      const dy = pt.y - this.startY;
+      if (!this.moved && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD) return;
+      this.moved = true;
+      const route = this.segRoute.map((p) => ({ x: p.x, y: p.y }));
+      const a = route[this.segI];
+      const b = route[this.segI + 1];
+      const oa = this.segRoute[this.segI];
+      const ob = this.segRoute[this.segI + 1];
+      if (a && b && oa && ob) {
+        if (this.segOrient === "H") {
+          a.y = oa.y + dy;
+          b.y = ob.y + dy;
+        } else {
+          a.x = oa.x + dx;
+          b.x = ob.x + dx;
+        }
+      }
+      this.cb.onSegmentDrag(this.segEdge, route);
     }
   }
   onPointerUp(ev) {
@@ -437,19 +827,38 @@ var InteractionController = class {
       else this.cb.onNodeSelect(this.activeId);
     } else if (this.mode === "connect" && this.activeId) {
       const pt = this.toSvgPoint(ev.clientX, ev.clientY);
-      const tgt = this.hitNode(pt.x, pt.y);
       this.cb.onRubber(null, null);
-      if (tgt) this.cb.onConnect(this.activeId, tgt);
+      const tp = this.hitPort(pt.x, pt.y);
+      if (tp) {
+        const src = { node: this.activeId, prop: this.activeProp, side: this.activeSide };
+        this.cb.onConnect(src, tp);
+      }
+    } else if (this.mode === "segdrag" && this.segEdge) {
+      if (this.moved) this.cb.onSegmentDragEnd(this.segEdge);
     }
     this.reset(ev);
   }
-  hitNode(x, y) {
-    const pos = this.cb.getLayout().pos;
-    for (const n of this.model.nodes) {
-      const p = pos[n.id];
-      if (p && x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h) return n.id;
-    }
-    return null;
+  /** 吸附到最近的锚点（阈值内）；exclude 排除自身锚点（高亮时用）。返回 {node,prop,side} 或 null。 */
+  hitPort(x, y, exclude) {
+    const svg = this.cb.getSvg();
+    if (!svg) return null;
+    let best = null;
+    let bestD = 26;
+    svg.querySelectorAll("[data-port]").forEach((el) => {
+      const cx = parseFloat(el.getAttribute("cx") || "NaN");
+      const cy = parseFloat(el.getAttribute("cy") || "NaN");
+      if (Number.isNaN(cx) || Number.isNaN(cy)) return;
+      const node = el.getAttribute("data-port") || "";
+      const prop = el.getAttribute("data-prop");
+      const side = el.getAttribute("data-side");
+      if (exclude && exclude.node === node && (exclude.prop || null) === (prop || null) && exclude.side === side) return;
+      const d = Math.hypot(cx - x, cy - y);
+      if (d < bestD) {
+        bestD = d;
+        best = { node, prop, side };
+      }
+    });
+    return best;
   }
   onPointerCancel(ev) {
     this.cb.onRubber(null, null);
@@ -462,6 +871,9 @@ var InteractionController = class {
     }
     this.mode = "idle";
     this.activeId = null;
+    this.activeProp = null;
+    this.activeSide = null;
+    this.segEdge = null;
     this.moved = false;
     this.pointerId = -1;
   }
@@ -477,6 +889,7 @@ var CmxOntologyGraph = class extends HTMLElement {
   selectedNodeId = null;
   selectedEdgeApiName = null;
   rubber = { from: null, to: null };
+  hotPort = null;
   interaction;
   _readonly = false;
   _bootstrapped = false;
@@ -488,6 +901,7 @@ var CmxOntologyGraph = class extends HTMLElement {
       getSvg: () => this.root.querySelector("svg"),
       onNodeDrag: (id, x, y) => {
         this.model.setLayoutHint(id, x, y);
+        for (const e of this.model.edges) if (e.source === id || e.target === id) this.model.clearEdgeRoute(e.apiName);
         this.paint();
       },
       onNodeDragEnd: (id) => {
@@ -496,10 +910,22 @@ var CmxOntologyGraph = class extends HTMLElement {
       },
       onNodeSelect: (id) => this.selectNode(id),
       onRubber: (from, to) => {
+        if (!from) this.hotPort = null;
         this.rubber = { from, to };
         this.paint();
       },
-      onConnect: (src, tgt) => this.requestConnect(src, tgt)
+      onHotPort: (port) => {
+        this.hotPort = port;
+      },
+      onConnect: (src, tgt) => this.requestConnect(src, tgt),
+      onSegmentDrag: (apiName, points) => {
+        this.model.setEdgeRoute(apiName, points);
+        this.paint();
+      },
+      onSegmentDragEnd: (apiName) => {
+        void apiName;
+        this.emit("spec-change", { spec: this.model.getDef() });
+      }
     });
   }
   connectedCallback() {
@@ -590,8 +1016,8 @@ var CmxOntologyGraph = class extends HTMLElement {
     this.render();
     this.emit("spec-change", { spec: this.model.getDef() });
   }
+  /** 重排：**不重置**已有位置，仅在现有各图元位置基础上重画（未定位的新节点走网格）。 */
   autoLayout() {
-    this.model.clearLayoutHints();
     this.render();
     this.emit("spec-change", { spec: this.model.getDef() });
   }
@@ -613,11 +1039,14 @@ var CmxOntologyGraph = class extends HTMLElement {
   currentLayout() {
     return layout(this.model.getDef(), this.cfg(), this.model.layoutHints());
   }
-  /** 拉线落点 → 请求宿主补关系元数据（不直接建，交速建气泡）。 */
+  /** 拉线落点 → 请求宿主补关系元数据（不直接建，交速建气泡）。属性锚点带出源/靶属性。 */
   requestConnect(src, tgt) {
     this.rubber = { from: null, to: null };
     this.paint();
-    this.emit("link-add", { source: src, target: tgt });
+    const detail = { source: src.node, target: tgt.node };
+    if (src.prop) detail.sourceProperty = src.prop;
+    if (tgt.prop) detail.targetProperty = tgt.prop;
+    this.emit("link-add", detail);
   }
   emit(name, detail) {
     this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
@@ -627,13 +1056,14 @@ var CmxOntologyGraph = class extends HTMLElement {
       selectedNodeId: this.selectedNodeId,
       selectedEdgeApiName: this.selectedEdgeApiName,
       readonly: this._readonly,
-      maxRows: this.cfg().maxRows
+      maxRows: this.cfg().maxRows,
+      hotPort: this.hotPort
     };
   }
   render() {
     const lay = this.currentLayout();
     const svg = this.model.nodes.length ? renderSvg(this.model.getDef(), lay, this.cfg(), this.renderState()) : '<div class="og-empty">\u7A7A\u672C\u4F53 \xB7 \u53CC\u51FB\u753B\u5E03\u6216\u70B9\u300C+ \u5BF9\u8C61\u7C7B\u578B\u300D\u5F00\u59CB</div>';
-    this.root.innerHTML = `<style>${graphCss()}</style><div class="og-canvas" part="canvas">${svg}</div>`;
+    this.root.innerHTML = `<style>${graphCss()}</style><div class="og-canvas${this._readonly ? " og-readonly" : ""}" part="canvas">${svg}</div>`;
     if (this._readonly) this.bindReadonlySelect();
     else this.bindInteractions();
   }
@@ -643,6 +1073,7 @@ var CmxOntologyGraph = class extends HTMLElement {
       this.render();
       return;
     }
+    canvas.classList.toggle("og-connecting", !!this.rubber.from);
     const lay = this.currentLayout();
     let svg = this.model.nodes.length ? renderSvg(this.model.getDef(), lay, this.cfg(), this.renderState()) : '<div class="og-empty">\u7A7A\u672C\u4F53</div>';
     if (this.rubber.from && this.rubber.to) {

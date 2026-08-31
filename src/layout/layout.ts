@@ -31,7 +31,7 @@ export const DEFAULT_LAYOUT: LayoutConfig = {
   headH: 46,
   rowH: 22,
   maxRows: 6,
-  pad: 40,
+  pad: 0,
 };
 export const PREVIEW_LAYOUT: LayoutConfig = {
   colGap: 260,

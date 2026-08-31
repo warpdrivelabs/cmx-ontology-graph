@@ -13,6 +13,18 @@ export declare class OntologyModel {
     static skeleton(name?: string): OntologyGraphDef;
     getDef(): OntologyGraphDef;
     setDef(def: OntologyGraphDef): void;
+    /** 设置某关系边的手动布线折点（含锚点）。 */
+    setEdgeRoute(apiName: string, points: {
+        x: number;
+        y: number;
+    }[]): void;
+    /** 取某关系边的手动布线折点；无则 undefined。 */
+    edgeRoute(apiName: string): {
+        x: number;
+        y: number;
+    }[] | undefined;
+    /** 清除某关系边的手动布线（回退自动布线）。 */
+    clearEdgeRoute(apiName: string): void;
     get nodes(): GraphNode[];
     get edges(): GraphEdge[];
     node(id: string): GraphNode | undefined;

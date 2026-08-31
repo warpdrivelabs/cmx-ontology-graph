@@ -55,6 +55,10 @@ export interface GraphEdge {
     roleA?: string;
     /** B→A 角色名。 */
     roleB?: string;
+    /** 源侧外键属性 apiName（连线起点锚到该属性行；缺省按名称启发式匹配或源主键）。 */
+    sourceProperty?: string;
+    /** 靶侧被引属性 apiName（连线终点锚到该属性行；缺省 = 靶主键）。 */
+    targetProperty?: string;
     /** 是否接口实现边（虚线挂接，非普通关系；由 implements 派生，不落后端关系表）。 */
     isInterfaceLink?: boolean;
 }
@@ -70,6 +74,11 @@ export interface OntologyGraphDef {
     edges: GraphEdge[];
     /** 组件私有：节点手动拖拽坐标提示（id → {x,y}）。后端忽略。 */
     _layout?: Record<string, LayoutHint>;
+    /** 组件私有：关系边手动布线折点（apiName → 折线全量顶点，含锚点）。后端忽略。 */
+    _edgeRoutes?: Record<string, {
+        x: number;
+        y: number;
+    }[]>;
 }
 /** 节点在画布上的定位盒。 */
 export interface NodeRect {
