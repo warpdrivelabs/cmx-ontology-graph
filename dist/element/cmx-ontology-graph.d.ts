@@ -40,6 +40,8 @@ export declare class CmxOntologyGraph extends HTMLElement {
     delLink(apiName: string): void;
     /** 重排：**不重置**已有位置，仅在现有各图元位置基础上重画（未定位的新节点走网格）。 */
     autoLayout(): void;
+    /** 工具栏「全部展开/收起」——批量设置分域容器折叠态（无分组时无副作用）。 */
+    setAllGroups(collapsed: boolean): void;
     selectNode(id: string): void;
     /** 供宿主编辑节点后回写模型并重画。 */
     refresh(): void;
@@ -49,10 +51,16 @@ export declare class CmxOntologyGraph extends HTMLElement {
     private requestConnect;
     private emit;
     private renderState;
+    /** 当前是否走分域折叠视图（对象数少/无分组 → 回退扁平图）。 */
+    private grouped;
+    /** 构建画布 SVG（分域折叠 或 扁平）。 */
+    private buildSvg;
     private render;
     private paint;
     private bindInteractions;
     private bindReadonlySelect;
+    /** 分域折叠视图交互：容器折叠切换 + 节点/边选中 + **从属性锚点拉线建关系**（节点重定位留 M2）。 */
+    private bindGrouped;
 }
 /** 幂等注册。 */
 export declare function defineOntologyGraph(): void;

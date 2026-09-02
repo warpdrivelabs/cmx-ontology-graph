@@ -4,7 +4,7 @@
  *
  * 富卡片高度随属性行数变化（对象类型卡内列关键属性）；接口节点固定矮胶囊。
  */
-import type { GraphNode, LayoutResult, OntologyGraphDef } from '../model/types.js';
+import type { GraphNode, GraphProperty, LayoutResult, OntologyGraphDef } from '../model/types.js';
 export interface LayoutConfig {
     /** 网格列间距（卡片中心距）。 */
     colGap: number;
@@ -23,7 +23,14 @@ export interface LayoutConfig {
 }
 export declare const DEFAULT_LAYOUT: LayoutConfig;
 export declare const PREVIEW_LAYOUT: LayoutConfig;
-/** 卡片高度：对象类型 = 头 + min(属性数, maxRows)*行高 + 折叠行；接口 = 矮胶囊。 */
+/** 一个属性是否为层块（复合子层：业务单据的行/明细）。 */
+export declare function isLevelProp(p: GraphProperty): boolean;
+/**
+ * 卡内渲染行数（递归）：标量属性 = 1 行；层块 = 层头 1 行 + 其 children 递归行数。
+ * 顶层标量超 maxRows 折叠为 1 行「+N」；层块永远整块展开（业务单据层级是重点，不截断）。
+ */
+export declare function countRenderRows(props: GraphProperty[], maxRows: number): number;
+/** 卡片高度：对象类型 = 头 + 渲染行数*行高 + 留白；接口 = 矮胶囊。层块递归计高。 */
 export declare function nodeHeight(n: GraphNode, cfg: LayoutConfig): number;
 /** 计算布局：确定性网格 + 拖拽提示覆盖。 */
 export declare function layout(def: OntologyGraphDef, cfg: LayoutConfig, hints?: Record<string, {

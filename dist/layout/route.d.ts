@@ -25,6 +25,12 @@ export declare function routeAnchored(pa: Pt, sa: Side, pb: Pt, sb: Side, endA: 
 export declare function routeEdge(a: NodeRect, b: NodeRect, others: NodeRect[]): Pt[];
 /** 折点序列 → 圆角 SVG path。 */
 export declare function toPath(pts: Pt[], radius?: number): string;
+/** 折线弧长中点 + 所在段朝向（放边标签；纵向段 → 标签沿线竖排）。 */
+export declare function polyMidpointOriented(pts: Pt[]): {
+    x: number;
+    y: number;
+    vertical: boolean;
+};
 /** 折线弧长中点（放边标签）。 */
 export declare function polyMidpoint(pts: Pt[]): Pt;
 //# sourceMappingURL=route.d.ts.map

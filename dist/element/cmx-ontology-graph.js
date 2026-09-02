@@ -13,7 +13,8 @@
  */
 import { OntologyModel } from '../model/OntologyModel.js';
 import { DEFAULT_LAYOUT, PREVIEW_LAYOUT, layout as computeLayout } from '../layout/layout.js';
-import { graphCss, renderSvg } from '../render/svg.js';
+import { groupLayout, groupingActive, allGroupKeys } from '../layout/groupLayout.js';
+import { graphCss, renderSvg, renderGrouped } from '../render/svg.js';
 import { InteractionController } from '../interaction/pointer.js';
 export class CmxOntologyGraph extends HTMLElement {
     static get observedAttributes() {
@@ -170,6 +171,12 @@ export class CmxOntologyGraph extends HTMLElement {
         this.render();
         this.emit('spec-change', { spec: this.model.getDef() });
     }
+    /** 工具栏「全部展开/收起」——批量设置分域容器折叠态（无分组时无副作用）。 */
+    setAllGroups(collapsed) {
+        this.model.setAllGroups(allGroupKeys(this.model.getDef()), collapsed);
+        this.render();
+        this.emit('spec-change', { spec: this.model.getDef() });
+    }
     selectNode(id) {
         this.selectedNodeId = id;
         this.selectedEdgeApiName = null;
@@ -211,13 +218,28 @@ export class CmxOntologyGraph extends HTMLElement {
             hotPort: this.hotPort,
         };
     }
+    /** 当前是否走分域折叠视图（对象数少/无分组 → 回退扁平图）。 */
+    grouped() {
+        return this.model.nodes.length > 0 && groupingActive(this.model.getDef());
+    }
+    /** 构建画布 SVG（分域折叠 或 扁平）。 */
+    buildSvg() {
+        if (!this.model.nodes.length)
+            return '<div class="og-empty">空本体 · 双击画布或点「+ 对象类型」开始</div>';
+        const def = this.model.getDef();
+        if (this.grouped()) {
+            const gl = groupLayout(def, this.cfg(), this.model.groupCollapsed() || {});
+            return renderGrouped(def, gl, this.cfg(), this.renderState());
+        }
+        return renderSvg(def, this.currentLayout(), this.cfg(), this.renderState());
+    }
     render() {
-        const lay = this.currentLayout();
-        const svg = this.model.nodes.length
-            ? renderSvg(this.model.getDef(), lay, this.cfg(), this.renderState())
-            : '<div class="og-empty">空本体 · 双击画布或点「+ 对象类型」开始</div>';
-        this.root.innerHTML = `<style>${graphCss()}</style><div class="og-canvas${this._readonly ? ' og-readonly' : ''}" part="canvas">${svg}</div>`;
-        if (this._readonly)
+        const grouped = this.grouped();
+        const cls = `og-canvas${this._readonly ? ' og-readonly' : ''}${grouped ? ' og-grouped' : ''}`;
+        this.root.innerHTML = `<style>${graphCss()}</style><div class="${cls}" part="canvas">${this.buildSvg()}</div>`;
+        if (grouped)
+            this.bindGrouped();
+        else if (this._readonly)
             this.bindReadonlySelect();
         else
             this.bindInteractions();
@@ -229,10 +251,7 @@ export class CmxOntologyGraph extends HTMLElement {
             return;
         }
         canvas.classList.toggle('og-connecting', !!this.rubber.from);
-        const lay = this.currentLayout();
-        let svg = this.model.nodes.length
-            ? renderSvg(this.model.getDef(), lay, this.cfg(), this.renderState())
-            : '<div class="og-empty">空本体</div>';
+        let svg = this.buildSvg();
         if (this.rubber.from && this.rubber.to) {
             const r = `<path class="og-rubber" d="M${this.rubber.from.x},${this.rubber.from.y} L${this.rubber.to.x},${this.rubber.to.y}"/>`;
             svg = svg.replace('</svg>', r + '</svg>');
@@ -244,6 +263,7 @@ export class CmxOntologyGraph extends HTMLElement {
         if (!canvas || canvas.__ogBound)
             return;
         canvas.__ogBound = true;
+        this.interaction.setConnectOnly(false);
         canvas.addEventListener('pointerdown', (e) => this.interaction.onPointerDown(e));
         canvas.addEventListener('pointermove', (e) => this.interaction.onPointerMove(e));
         canvas.addEventListener('pointerup', (e) => this.interaction.onPointerUp(e));
@@ -270,6 +290,46 @@ export class CmxOntologyGraph extends HTMLElement {
                 this.selectedEdgeApiName = edgeEl.getAttribute('data-edge');
                 this.selectedNodeId = null;
                 this.paint();
+                return;
+            }
+            const nodeEl = e.target.closest('[data-node]');
+            if (nodeEl) {
+                const id = nodeEl.getAttribute('data-node');
+                if (id)
+                    this.selectNode(id);
+            }
+        });
+    }
+    /** 分域折叠视图交互：容器折叠切换 + 节点/边选中 + **从属性锚点拉线建关系**（节点重定位留 M2）。 */
+    bindGrouped() {
+        const canvas = this.root.querySelector('.og-canvas');
+        if (!canvas || canvas.__ogGrpBound)
+            return;
+        canvas.__ogGrpBound = true;
+        // 展开容器内的对象卡仍带属性锚点：connectOnly 让端口可拉线建关系，但不进入节点重定位/线段布线。
+        this.interaction.setConnectOnly(true);
+        canvas.addEventListener('pointerdown', (e) => this.interaction.onPointerDown(e));
+        canvas.addEventListener('pointermove', (e) => this.interaction.onPointerMove(e));
+        canvas.addEventListener('pointerup', (e) => this.interaction.onPointerUp(e));
+        canvas.addEventListener('pointercancel', (e) => this.interaction.onPointerCancel(e));
+        canvas.addEventListener('click', (e) => {
+            const tgl = e.target.closest('[data-group-toggle]');
+            if (tgl) {
+                const key = tgl.getAttribute('data-group-toggle');
+                if (key) {
+                    this.model.toggleGroup(key);
+                    this.render();
+                    this.emit('spec-change', { spec: this.model.getDef() });
+                }
+                return;
+            }
+            const edgeEl = e.target.closest('[data-edge]');
+            if (edgeEl) {
+                this.selectedEdgeApiName = edgeEl.getAttribute('data-edge');
+                this.selectedNodeId = null;
+                this.paint();
+                const e2 = this.model.edges.find((x) => x.apiName === this.selectedEdgeApiName);
+                this.emit('edge-select', { apiName: this.selectedEdgeApiName, edge: e2 ? JSON.parse(JSON.stringify(e2)) : null });
                 return;
             }
             const nodeEl = e.target.closest('[data-node]');

@@ -21,9 +21,15 @@ export class InteractionController {
     grabDY = 0;
     moved = false;
     pointerId = -1;
+    /** connectOnly：分域折叠视图用——仅允许从属性锚点拉线建关系；节点重定位/线段手动布线（容器自动布局）留 M2。 */
+    connectOnly = false;
     constructor(model, cb) {
         this.model = model;
         this.cb = cb;
+    }
+    /** 切换 connectOnly（分域折叠开、扁平图关）。 */
+    setConnectOnly(v) {
+        this.connectOnly = v;
     }
     toSvgPoint(clientX, clientY) {
         const svg = this.cb.getSvg();
@@ -37,8 +43,8 @@ export class InteractionController {
     }
     onPointerDown(ev) {
         const target = ev.target;
-        // 边内部线段拖拽（两端非锚点）：优先于端口/节点。
-        const segEl = target.closest('[data-edge-seg]');
+        // 边内部线段拖拽（两端非锚点）：优先于端口/节点。connectOnly（分域）下禁用手动布线。
+        const segEl = this.connectOnly ? null : target.closest('[data-edge-seg]');
         if (segEl) {
             const grp = segEl.closest('[data-edge]');
             const routeStr = grp ? grp.getAttribute('data-route') : null;
@@ -85,6 +91,9 @@ export class InteractionController {
             return;
         }
         if (nodeEl) {
+            // connectOnly（分域折叠）：节点重定位留 M2 —— 不进入 drag，交由 click 处理选中/容器折叠。
+            if (this.connectOnly)
+                return;
             const id = nodeEl.getAttribute('data-node');
             if (!id)
                 return;

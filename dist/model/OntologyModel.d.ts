@@ -25,6 +25,14 @@ export declare class OntologyModel {
     }[] | undefined;
     /** 清除某关系边的手动布线（回退自动布线）。 */
     clearEdgeRoute(apiName: string): void;
+    /** 当前所有分组容器折叠态（组键 → 是否收起）。 */
+    groupCollapsed(): Record<string, boolean> | undefined;
+    /** 设某组键收起/展开。 */
+    setGroupCollapsed(key: string, collapsed: boolean): void;
+    /** 切换某组键折叠态（默认收起，故首次切换 = 展开）。 */
+    toggleGroup(key: string): void;
+    /** 批量设置（工具栏「全部展开/收起」用）。 */
+    setAllGroups(keys: string[], collapsed: boolean): void;
     get nodes(): GraphNode[];
     get edges(): GraphEdge[];
     node(id: string): GraphNode | undefined;

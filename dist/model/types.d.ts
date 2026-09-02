@@ -15,6 +15,8 @@ export type TypeStatus = 'experimental' | 'active' | 'deprecated';
 /** 卡内属性行（渲染用精简投影；完整定义在宿主 Inspector）。 */
 export interface GraphProperty {
     apiName: string;
+    /** 显示名（层块头/字段的中文名，可选）。 */
+    displayName?: string;
     /** 基础类型（string/long/decimal/…），卡内小字显示。 */
     baseType?: string;
     /** 是否主键（卡内 ◇ 置顶）。 */
@@ -27,6 +29,12 @@ export interface GraphProperty {
     isIndexed?: boolean;
     /** 语义类型徽标（金额/百分比…）。 */
     semanticType?: string;
+    /** 复合层块（业务单据的子层，如订单行）——array/struct 属性，children = 该层字段（可再嵌层）。 */
+    children?: GraphProperty[];
+    /** 是否为层块（复合类型，卡内渲缩进层块而非单行）。 */
+    isLevel?: boolean;
+    /** 层显示名（该子层来源实体的 displayName，如"订单行"）。 */
+    entityName?: string;
 }
 /** 图节点（对象类型 / 接口）。 */
 export interface GraphNode {
@@ -42,6 +50,8 @@ export interface GraphNode {
     properties?: GraphProperty[];
     /** 对象类型实现的接口 apiName（用于虚线挂接边生成）。 */
     implements?: string[];
+    /** DAM 分组路径（宿主注入，如 [domain, application, module]）——本体图按此分域折叠，缓解大图性能。 */
+    groupPath?: string[];
 }
 /** 有向关系边（关系类型）。source=A端 apiName，target=B端 apiName。 */
 export interface GraphEdge {
@@ -79,6 +89,8 @@ export interface OntologyGraphDef {
         x: number;
         y: number;
     }[]>;
+    /** 组件私有：分组容器折叠态（组键 domain/domainapp/… → 是否收起）。后端忽略。 */
+    _groupCollapsed?: Record<string, boolean>;
 }
 /** 节点在画布上的定位盒。 */
 export interface NodeRect {

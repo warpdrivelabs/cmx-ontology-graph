@@ -30,6 +30,7 @@ export class OntologyModel {
         // 保留既有布局提示与手动布线（保存/刷新重建 spec 不带 _layout/_edgeRoutes 时不重置位置）。
         const prevLayout = this.def && this.def._layout ? this.def._layout : undefined;
         const prevRoutes = this.def && this.def._edgeRoutes ? this.def._edgeRoutes : undefined;
+        const prevGroups = this.def && this.def._groupCollapsed ? this.def._groupCollapsed : undefined;
         this.def = clone(def);
         this.def.nodes = this.def.nodes || [];
         this.def.edges = this.def.edges || [];
@@ -55,6 +56,9 @@ export class OntologyModel {
             if (Object.keys(kept).length)
                 this.def._edgeRoutes = kept;
         }
+        // 分组折叠态：spec 未带时沿用旧态（保存/刷新不重置展开/收起）。
+        if (!this.def._groupCollapsed && prevGroups)
+            this.def._groupCollapsed = prevGroups;
         this.syncInterfaceLinks();
     }
     /** 设置某关系边的手动布线折点（含锚点）。 */
@@ -70,6 +74,27 @@ export class OntologyModel {
     clearEdgeRoute(apiName) {
         if (this.def._edgeRoutes)
             delete this.def._edgeRoutes[apiName];
+    }
+    // ── 分组折叠态（DAM 分域）──
+    /** 当前所有分组容器折叠态（组键 → 是否收起）。 */
+    groupCollapsed() {
+        return this.def._groupCollapsed;
+    }
+    /** 设某组键收起/展开。 */
+    setGroupCollapsed(key, collapsed) {
+        this.def._groupCollapsed = this.def._groupCollapsed || {};
+        this.def._groupCollapsed[key] = collapsed;
+    }
+    /** 切换某组键折叠态（默认收起，故首次切换 = 展开）。 */
+    toggleGroup(key) {
+        this.def._groupCollapsed = this.def._groupCollapsed || {};
+        this.def._groupCollapsed[key] = !(this.def._groupCollapsed[key] ?? true);
+    }
+    /** 批量设置（工具栏「全部展开/收起」用）。 */
+    setAllGroups(keys, collapsed) {
+        this.def._groupCollapsed = this.def._groupCollapsed || {};
+        for (const k of keys)
+            this.def._groupCollapsed[k] = collapsed;
     }
     get nodes() {
         return this.def.nodes;

@@ -52,7 +52,11 @@ export declare class InteractionController {
     private grabDY;
     private moved;
     private pointerId;
+    /** connectOnly：分域折叠视图用——仅允许从属性锚点拉线建关系；节点重定位/线段手动布线（容器自动布局）留 M2。 */
+    private connectOnly;
     constructor(model: OntologyModel, cb: InteractionCallbacks);
+    /** 切换 connectOnly（分域折叠开、扁平图关）。 */
+    setConnectOnly(v: boolean): void;
     private toSvgPoint;
     onPointerDown(ev: PointerEvent): void;
     private safeCapture;

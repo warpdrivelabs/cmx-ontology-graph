@@ -241,10 +241,10 @@ export function toPath(pts: Pt[], radius = 7): string {
   return d;
 }
 
-/** 折线弧长中点（放边标签）。 */
-export function polyMidpoint(pts: Pt[]): Pt {
-  if (pts.length === 0) return { x: 0, y: 0 };
-  if (pts.length === 1) return pts[0]!;
+/** 折线弧长中点 + 所在段朝向（放边标签；纵向段 → 标签沿线竖排）。 */
+export function polyMidpointOriented(pts: Pt[]): { x: number; y: number; vertical: boolean } {
+  if (pts.length === 0) return { x: 0, y: 0, vertical: false };
+  if (pts.length === 1) return { x: pts[0]!.x, y: pts[0]!.y, vertical: false };
   const seg: number[] = [];
   let total = 0;
   for (let i = 1; i < pts.length; i++) {
@@ -259,11 +259,19 @@ export function polyMidpoint(pts: Pt[]): Pt {
       const t = d ? (total / 2 - acc) / d : 0;
       const a = pts[i - 1]!;
       const b = pts[i]!;
-      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      const vertical = Math.abs(b.y - a.y) > Math.abs(b.x - a.x);
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, vertical };
     }
     acc += d;
   }
-  return pts[Math.floor(pts.length / 2)]!;
+  const m = pts[Math.floor(pts.length / 2)]!;
+  return { x: m.x, y: m.y, vertical: false };
+}
+
+/** 折线弧长中点（放边标签）。 */
+export function polyMidpoint(pts: Pt[]): Pt {
+  const m = polyMidpointOriented(pts);
+  return { x: m.x, y: m.y };
 }
 
 function dist(a: Pt, b: Pt): number {

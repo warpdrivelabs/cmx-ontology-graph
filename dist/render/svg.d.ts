@@ -11,6 +11,7 @@
  */
 import type { LayoutResult, OntologyGraphDef } from '../model/types.js';
 import type { LayoutConfig } from '../layout/layout.js';
+import type { GroupLayoutResult } from '../layout/groupLayout.js';
 export interface RenderState {
     selectedNodeId: string | null;
     selectedEdgeApiName: string | null;
@@ -24,6 +25,8 @@ export interface RenderState {
     } | null;
 }
 export declare function renderSvg(def: OntologyGraphDef, lay: LayoutResult, cfg: LayoutConfig, st: RenderState): string;
-/** 组件样式（走 --og-* 令牌，宿主锚 --sap*；裸色兜底）。 */
+/** 分域折叠渲染：容器盒 + 可见叶卡 + 归约后的边。可见节点数受"已展开"约束，而非对象总数。 */
+export declare function renderGrouped(def: OntologyGraphDef, gl: GroupLayoutResult, cfg: LayoutConfig, st: RenderState): string;
+/** 组件样式（走 --og-* 令牌，:host 锚定门户 --sap* → light/dark 随门户主题自动翻，零 JS；裸 hex 仅独立部署无 UI5 时降级）。 */
 export declare function graphCss(): string;
 //# sourceMappingURL=svg.d.ts.map
