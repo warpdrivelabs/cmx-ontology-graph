@@ -46,12 +46,12 @@
 ## 构建 / 交付 / 测试
 
 ```bash
+npm install           # 首次 / 依赖变更后（工具链见 package.json devDependencies）
 ./build.sh            # tsc 类型 + esbuild 打单文件 ESM → dist/cmx-ontology-graph.esm.js
 ./sync-component.sh   # 拷产物 → ../../backend/cmx-container/assets/onto/web/ui-native/vendor/cmx-ontology-graph.js
 npx --no-install vitest run   # 单测（纯逻辑：OntologyModel / layout / renderSvg）
 ```
 
-工具链复用仓内隔离副本（离线）：`.tsc-tool` 符号链接到 sibling `cmx-mega-sheet` 的隔离 tsc；esbuild 原
-取自 `cmx-home-site`（该仓已移出工作区，需自备）；`node_modules` 符号链接自 sibling `cmx-decision-graph`
-（devDeps 相同）。**改组件源必须重跑 `build.sh` + `sync-component.sh`，否则本体平台用旧组件**
-（对标 @cmx/megasheet vendor 纪律）。
+工具链即 package.json `devDependencies`（typescript / esbuild / vitest），`npm install` 后走本仓
+`node_modules/.bin`，不依赖兄弟仓副本。**改组件源必须重跑 `build.sh` + `sync-component.sh`，
+否则本体平台用旧组件**（对标 @cmx/megasheet vendor 纪律）。
