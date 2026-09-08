@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 SRC="dist/cmx-ontology-graph.esm.js"
-DST="../cmx-container/assets/onto/web/ui-native/vendor/cmx-ontology-graph.js"
+DST="../../backend/cmx-container/assets/onto/web/ui-native/vendor/cmx-ontology-graph.js"
 
 [ -f "$SRC" ] || { echo "✗ 缺 $SRC，请先 ./build.sh"; exit 1; }
 mkdir -p "$(dirname "$DST")"

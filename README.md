@@ -47,10 +47,11 @@
 
 ```bash
 ./build.sh            # tsc 类型 + esbuild 打单文件 ESM → dist/cmx-ontology-graph.esm.js
-./sync-component.sh   # 拷产物 → ../cmx-container/assets/onto/web/ui-native/vendor/cmx-ontology-graph.js
+./sync-component.sh   # 拷产物 → ../../backend/cmx-container/assets/onto/web/ui-native/vendor/cmx-ontology-graph.js
 npx --no-install vitest run   # 单测（纯逻辑：OntologyModel / layout / renderSvg）
 ```
 
-工具链复用仓内隔离副本（离线）：`.tsc-tool` 符号链接到 cmx-mega-sheet 的隔离 tsc；esbuild 取自
-cmx-home-site；`node_modules` 符号链接自 sibling `cmx-decision-graph`（devDeps 相同）。**改组件源必须
-重跑 `build.sh` + `sync-component.sh`，否则本体平台用旧组件**（对标 @cmx/megasheet vendor 纪律）。
+工具链复用仓内隔离副本（离线）：`.tsc-tool` 符号链接到 sibling `cmx-mega-sheet` 的隔离 tsc；esbuild 原
+取自 `cmx-home-site`（该仓已移出工作区，需自备）；`node_modules` 符号链接自 sibling `cmx-decision-graph`
+（devDeps 相同）。**改组件源必须重跑 `build.sh` + `sync-component.sh`，否则本体平台用旧组件**
+（对标 @cmx/megasheet vendor 纪律）。
